@@ -19,16 +19,16 @@ python realtime_demo.py
 
 **Files**: `realtime_demo.py` • `turtlebot.png` • `README.md`
 
-## The Q-Learning Breakthrough
+## The Q-Learning
 
-### **Sparse Rewards → Smart Guidance**
+### **Sparse Rewards → Optimal Guidance**
 ```python
 # Before: Only +1 at goal, -1 everywhere else (robot gets lost)
 # After: Distance-based rewards guide every step
 reward = 0.1 if closer_to_goal else -0.05  # Learning signal everywhere!
 ```
 
-### **Smart Exploration Strategy**
+### **Good Exploration Strategy**
 ```python
 # Adaptive epsilon: Start exploring (0.9) → Gradually exploit (0.05)
 epsilon = max(0.05, 0.9 * (0.999 ** episode))
@@ -48,7 +48,7 @@ Q[goal_position] = 10.0  # "Hey robot, go here!"
 | **Navigation** | Stuck/Failed | **18.8 steps** | Efficient paths |
 | **Learning** | Never converges | **~200 episodes** | Stable learning |
 
-### Learning Journey
+### What I got:
 - **Early**: 10.04 avg reward (learning basics)
 - **Middle**: 11.30 avg reward (getting good)  
 - **Late**: 11.17 avg reward (expert level)
@@ -66,7 +66,7 @@ Q[goal_position] = 10.0  # "Hey robot, go here!"
 - **Value landscapes** across the environment
 - **Success analytics** and learning phases
 
-## Technical Specs
+## Params:
 
 | Parameter | Value | Why It Works |
 |-----------|-------|--------------|
@@ -75,24 +75,11 @@ Q[goal_position] = 10.0  # "Hey robot, go here!"
 | Episodes | 2000 | Sufficient for mastery |
 | Environment | 20×14 maze | Complex but solvable |
 
-## Educational Value
-
-Perfect for learning:
+## Value
 - **Q-learning fundamentals** with visual feedback
 - **Reward engineering** techniques  
 - **Exploration vs exploitation** balance
 - **Policy interpretation** through arrows and heatmaps
-
-## Code Architecture
-
-```python
-RealtimeMapEnv()        # Environment + TurtleBot visualization
-RealtimeQLearning()     # Enhanced Q-learning with analytics  
-train()                 # Real-time learning with progress tracking
-demonstrate_policy()    # Show off the learned strategy
-```
-
-## Research Impact
 
 Demonstrates solutions to core RL challenges:
 - **Sparse reward problem** → Distance-based shaping
@@ -115,5 +102,3 @@ Demonstrates solutions to core RL challenges:
 *Enhanced from group lab work with Mazen Elgabalawy at Universitat de Girona, Spain*
 
 ---
-
-**Bottom Line**: This isn't just code—it's a complete transformation of how Q-learning can work when properly engineered. Watch a robot go from clueless to expert in real-time! 
