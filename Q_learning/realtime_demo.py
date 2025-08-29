@@ -35,11 +35,44 @@ Features:
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.animation import FFMpegWriter
 import matplotlib.image as mpimg
 from matplotlib.patches import Rectangle
 import time
 import os
 import pickle
+import argparse
+
+class InlineScreenRecorder:
+  """Minimal wrapper around Matplotlib's FFMpegWriter to record frames inline."""
+  def __init__(self, figure, output_path, fps=30, dpi=100):
+    self.figure = figure
+    self.output_path = os.path.expanduser(output_path)
+    self.fps = fps
+    self.dpi = dpi
+    self._context = None
+    self._writer = None
+
+  def start(self):
+    os.makedirs(os.path.dirname(self.output_path), exist_ok=True)
+    self._writer = FFMpegWriter(fps=self.fps)
+    # Enter writer context so we can call grab_frame() at each render
+    self._context = self._writer.saving(self.figure, self.output_path, dpi=self.dpi)
+    self._context.__enter__()
+    print(f"[Recorder] Started: {self.output_path} @ {self.fps} fps")
+
+  def capture(self):
+    if self._writer is not None:
+      self._writer.grab_frame()
+
+  def stop(self):
+    if self._context is not None:
+      try:
+        self._context.__exit__(None, None, None)
+      finally:
+        self._context = None
+        self._writer = None
+        print(f"[Recorder] Finalized: {self.output_path}")
 
 def save_qtable_to_file(agent, filename):
     """Save Q-table and training information to file"""
@@ -86,6 +119,14 @@ class RealtimeMapEnv:
     plt.ion() # Interactive mode
     self.fig, self.ax = plt.subplots(figsize=(10, 8))
     self.setup_environment()
+    # Keep handles to dynamic artists to avoid full redraw-induced jitter
+    self.robot_artist = None
+    # Fixed-position text to avoid layout changes from title updates
+    self.title_text = self.ax.text(0.02, 1.02,
+                                   '', transform=self.ax.transAxes,
+                                   fontsize=14, fontweight='bold', va='bottom')
+    # Optional: inline recorder injected by caller
+    self.recorder = None
    
     if map[goal[0], goal[1]] != 0:
       raise ValueError("Goal position is an obstacle")
@@ -202,33 +243,38 @@ class RealtimeMapEnv:
     return new_state, reward, done
 
   def render_realtime(self, episode=0, step=0, reward=0, delay=0.1):
-    """Render with real-time animation"""
-    # Clear and redraw environment
-    self.setup_environment()
-   
-    # Draw robot
+    """Render with real-time animation (no full redraw to prevent jitter)."""
+    # Draw or update robot artist
     if self.robot_image is not None:
       robot_size = 0.8
       extent = [self.current_state[1] - robot_size/2, self.current_state[1] + robot_size/2,
-           self.current_state[0] + robot_size/2, self.current_state[0] - robot_size/2]
-     
-      self.ax.imshow(self.robot_image, extent=extent, zorder=10, alpha=0.9)
+                self.current_state[0] + robot_size/2, self.current_state[0] - robot_size/2]
+      if self.robot_artist is None or getattr(self.robot_artist, 'get_array', None) is None:
+        self.robot_artist = self.ax.imshow(self.robot_image, extent=extent, zorder=10, alpha=0.9)
+      else:
+        self.robot_artist.set_extent(extent)
       print(f" TurtleBot at position ({self.current_state[0]}, {self.current_state[1]})")
     else:
-      # Fallback visualization
-      self.ax.scatter(self.current_state[1], self.current_state[0],
-              c='red', s=400, marker='o', zorder=10,
-              edgecolor='darkred', linewidth=3)
+      # Fallback: update scatter position
+      if self.robot_artist is None:
+        self.robot_artist = self.ax.scatter(self.current_state[1], self.current_state[0],
+                                            c='red', s=400, marker='o', zorder=10,
+                                            edgecolor='darkred', linewidth=3)
+      else:
+        # PathCollection set_offsets expects [[x, y]] in data coords
+        self.robot_artist.set_offsets([[self.current_state[1], self.current_state[0]]])
       print(f" Robot (fallback) at position ({self.current_state[0]}, {self.current_state[1]})")
-   
-    # Update title
-    self.ax.set_title(f' Real-time Q-Learning with TurtleBot\nEpisode: {episode}, Step: {step}, Reward: {reward:.1f}',
-             fontsize=14, fontweight='bold')
-   
-    # Force display update
-    plt.draw()
+
+    # Update overlay text without relayout
+    self.title_text.set_text(f' Real-time Q-Learning with TurtleBot\nEpisode: {episode}, Step: {step}, Reward: {reward:.1f}')
+
+    # Update canvas
+    self.fig.canvas.draw_idle()
+    # Capture the drawn frame if recorder is active
+    if getattr(self, 'recorder', None) is not None:
+      self.recorder.capture()
     plt.pause(delay)
-   
+
     return self.fig
 
 
@@ -355,6 +401,12 @@ class RealtimeQLearning:
    
     if total_reward > 5: # Updated success criterion
       print(f" SUCCESS! Reached goal in {step} steps with total reward {total_reward:.2f}!")
+      
+      # Keep recording for 5 seconds after reaching goal
+      for _ in range(50):  # 50 frames * 0.1 seconds = 5 seconds
+        if getattr(self.env, 'recorder', None) is not None:
+          self.env.recorder.capture()
+        plt.pause(0.1)
     else:
       print(f"ERROR: Failed to reach goal in {step} steps (total reward: {total_reward:.2f})")
 
@@ -523,6 +575,15 @@ class RealtimeQLearning:
 
 def main():
   """Main demo function"""
+  parser = argparse.ArgumentParser(description='Improved Real-time Q-Learning Demo')
+  parser.add_argument('--record', action='store_true', help='Enable inline recording to MP4 using FFMpegWriter')
+  parser.add_argument('--record-path', type=str, default=os.path.expanduser('~/Videos/q_learning_inline_%Y%m%d_%H%M%S.mp4'), help='Output path for the recording (supports strftime tokens)')
+  parser.add_argument('--record-fps', type=int, default=30, help='Recording frames per second')
+  parser.add_argument('--episodes', type=int, default=2000, help='Total training episodes')
+  parser.add_argument('--viz-episodes', type=int, default=2, help='Number of early episodes to visualize')
+  parser.add_argument('--delay', type=float, default=0.2, help='Render delay in seconds for visualization')
+  args = parser.parse_args()
+
   # Define map
   map_data = [
     [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
@@ -552,10 +613,22 @@ def main():
   env = RealtimeMapEnv(grid_map, goal_position, max_steps=150, robot_image_path='turtlebot.png')
  
   # Create agent with improved parameters
-  agent = RealtimeQLearning(env, alpha=0.15, gamma=0.99, epsilon=0.9, n_episodes=2000)
+  agent = RealtimeQLearning(env, alpha=0.15, gamma=0.99, epsilon=0.9, n_episodes=args.episodes)
  
-  # Train with visualization (reduce to 2 episodes for faster demo)
-  agent.train(episodes_to_visualize=2, delay=0.2)
+  # Optional inline recording setup
+  recorder = None
+  if args.record:
+    # Expand strftime tokens in output path
+    try:
+      output_path = time.strftime(args.record_path)
+    except Exception:
+      output_path = args.record_path
+    recorder = InlineScreenRecorder(figure=env.fig, output_path=output_path, fps=args.record_fps)
+    env.recorder = recorder
+    recorder.start()
+
+  # Train with visualization
+  agent.train(episodes_to_visualize=args.viz_episodes, delay=args.delay)
   
   # Save trained Q-table for later use in other environments
   save_qtable_to_file(agent, 'trained_qtable.pkl')
@@ -570,6 +643,10 @@ def main():
   # Demonstrate final policy
   print("\n Final policy demonstration...")
   agent.demonstrate_policy(delay=0.5)
+
+  # Stop recorder if active
+  if recorder is not None:
+    recorder.stop()
  
   # Keep plot open
   plt.ioff()
